@@ -1,0 +1,589 @@
+---
+title: "S&DS 238 Compiled Work"
+author: "Kelly Farley"
+date: "12/17/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=FALSE)
+```
+
+```{r}
+library(MASS)
+library(rjags)
+```
+
+# S&DS 238: Probability, Statistics, and Data Analysis
+
+## Course Description
+
+Fundamental principles and techniques of probabilistic thinking, statistical modeling, and data analysis. Essentials of probability, including conditional probability, random variables, distributions, law of large numbers, central limit theorem, and Markov chains. Statistical inference with emphasis on the Bayesian approach: parameter estimation, likelihood, prior and posterior distributions, Bayesian inference using Markov chain Monte Carlo. Introduction to regression and linear models. Computers are used for calculations, simulations, and analysis of data.
+
+## Key Skills
+
+* **Probabilistic Thinking**: beta, binomial, Cauchy, exponential, gamma, geometric, normal, uniform distributions; conditional probability; joint and marginal distributions; indicator trick; LOTUS; law of large numbers and Markov inequality; central limit theorem and convolutions; correlation, covariance, variance
+* **Bayesian Inference**: choosing appropriate priors and models; determining and analyzing posterior distribution; likelihood and maximum likelihood estimator
+* **Markov Chain Monte Carlo**: theoretical basis; coding basis from scratch; use of JAGS package; random walk and Metropolis-Hastings approaches
+* **Model Selection**: regression and linear models; regression effect and regression fallacy; Gibbs sampler; deviance and DIC
+* **Computation**: R used for all calculations, simulations, and analysis. Emphasis on well-annotated and concise code and explanations using Latex
+
+## Coding Samples
+
+This course included 10 weekly problem sets, with a total of over 5k lines of Rmarkdown. Below are samples that showcase transferrable skillsets.
+
+1. **One-Way Analysis of Variance**
+
+A dataset containing the ages of death for novelists, poets, and nonfiction writers was analyzed to assess the hypothesis that poets tend to die young.
+
+2. **One-Way Analysis of Variance** (JAGS)
+
+To show the power of using JAGS, the sample analysis of the novelist, poet, and nonfiction writer ages of death was repeated using JAGS.
+
+3. **COVID-19 Test Sensitivity** (JAGS)
+
+COVID-19 test sensitivity is estimaated as a function of days since infection; the highest possible test sensitivity is determined.
+
+4. **Heart Attack Percentage Reduction** (JAGS)
+
+The percentage reduction in the rate of heart attacks due to a drug is examined and used to validate the results reported in a medical study.
+
+5. **Mediation and Sunscreen Use** (JAGS)
+
+It is examined whether a factual leaflet increases the likelihood that people plan to use sunscreen on a beach vacation. Furthermore, it is examined if this effect is due to the mediator variable of how likely people think they are to get skin cancer.
+
+6. **Bayesian A/B Website Testing**
+
+The amount of visitors that signed up for membership after viewing one version of the webpage is compared to that of visitors who viewed an alternative version of the website to determine which one is better.
+
+7. **Game Strategy Test**
+
+The hypothesis that alternating between the two unfair games can result in gains in the long-run is tested. 
+
+### One-Way Analysis of Variance
+
+A dataset containing the ages of death for novelists, poets, and nonfiction writers was analyzed to assess the hypothesis that poets tend to die young.
+
+```{r}
+#read data
+d <- read.csv("http://www.stat.yale.edu/~jtc5/238/data/cost-of-the-muse.csv")
+# subset by type
+poets <- d[d$Type=="Poems",]
+novels <- d[d$Type=="Novels",]
+nonf <- d[d$Type=="Nonfiction",]
+
+# 10k samples
+nit <- 10000
+
+# theta matrix for 6  parameters
+ths <- matrix(0, nrow=nit, ncol=6)
+
+# first theta
+th <- c(mean(d$Age), mean(d$Age), mean(d$Age), sd(d$Age), sd(d$Age), sd(d$Age))
+ths[1,] <- th
+
+# likelihood
+lik <- function(th){
+  mu1 <- th[1]; mu2 <- th[2]; mu3 <- th[3]; sig1 <- th[4]; sig2 <- th[5]; sig3 <- th[6]
+  prod(dnorm(x=novels$Age, mean=mu1, sd=sig1)) * prod(dnorm(x=poets$Age, mean=mu2, sd=sig2)) * prod(dnorm(x=nonf$Age, mean=mu3, sd=sig3))
+}
+
+# prior
+prior <- function(th){
+  # assume uniform prior
+  dunif(th, 0, 100)
+}
+
+# posterior
+post <- function(th){
+  # candidates inside interval
+  if(th[1:3] > 0 && th[1:3] < 100 && th[4:6] >0){return(prior(th) * lik(th))}
+  # candidates outside interval
+  return(0)
+}
+
+for(i in 2:nit){
+  # propose candidate
+  cand <- th + runif(n=6, min=-1, max=1)
+  # test ratio
+  ratio <- post(cand)/post(th)
+  u <- rep(runif(n=1, min=0, max=1), 6)
+  test <- u < ratio
+  if(sum(test==TRUE)==6){th <- cand}
+  #  u <- runif(n=6, min=-1, max=1)
+  # if(u < ratio){th <- cand}
+  ths[i,] <- th
+}
+
+# novelists versus poets
+nminusp <- ths[,1] - ths[,2]
+print("Difference in age between novelists and poets")
+print(quantile(nminusp, c(.025, .975)))
+
+# nonfiction versus poets
+nfminusp <- ths[,3] - ths[,2]
+print("Difference in age between nonfiction and poets")
+print(quantile(nfminusp, c(.025, .975)))
+```
+
+Because the 95% confidence intervals do not include 0 and are positive, it does seem like poets die at younger ages than both novelists and nonfiction writers.
+
+```{r}
+# initialize new column for order
+ths <- as.data.frame(ths)
+ths$order <- rep(NA, nit)
+
+# first number: group with min age
+# last number: group with max age
+for(i in 1:nit){
+  minAge <- which.min(ths[i, c(1:3)])
+  maxAge <- which.max(ths[i, c(1:3)])
+  ths$order[i] <- as.numeric(paste(minAge, maxAge, sep=""))
+}
+
+# 1 = novelists, 2 = poets, 3 = nonfiction
+ageOrder <- sort(table(ths$order), decreasing=TRUE)
+
+# poets < novelists < nonfiction: 213
+ageOrder[[1]]/nit
+
+# poets < nonfiction < novelists: 231
+ageOrder[[2]]/nit
+
+# novelists < poets < nonfiction: 123
+ageOrder[[3]]/nit
+```
+
+Most likely (213): poets < novelists < nonfiction (probability 0.9317)
+Second most likely (231): poets < nonfiction < novelists (probability 0.0517)
+Third most likely (123): novelists < poets < nonfiction (probability 0.0155)
+
+The first most likely option (p=0.9317) and the second most likely option (p=0.0517) both have poets dying at the youngest ages and together account for 9834 out of the 10k outcomes. It does seem like poets die young!
+
+### One-Way Analysis of Variance (JAGS)
+
+To show the power of using JAGS, the sample analysis of the novelist, poet, and nonfiction writer ages of death was repeated using JAGS.
+
+```{r}
+# model
+mymodel <- "  
+model{
+  for(i in 1:length(x1)){
+    x1[i] ~ dnorm(mu1, 1/sig1^2)  
+  }
+  for(i in 1:length(x2)){
+    x2[i] ~ dnorm(mu2, 1/sig2^2)
+  }
+  for(i in 1:length(x3)){
+    x3[i] ~ dnorm(mu3, 1/sig3^2)
+  }
+  mu1 ~ dunif(0, 100)
+  mu2 ~ dunif(0, 100)
+  mu3 ~ dunif(0, 100)
+  sig1 ~ dunif(0, 100)
+  sig2 ~ dunif(0, 100)
+  sig3 ~ dunif(0, 100)
+}
+"
+
+# compile
+jm <- jags.model(textConnection(mymodel), data = list(x1=novels$Age, x2=poets$Age, x3=nonf$Age))
+
+# MCMC
+cs <- coda.samples(jm, variable.names = c("mu1", "mu2", "mu3", "sig1", "sig2", "sig3"), n.iter = nit)
+
+# dataframe of results
+s <- as.data.frame(cs[[1]])
+
+# novelists versus poets
+nminusp <- s[,1] - s[,2]
+print("Difference in age between novelists and poets")
+print(quantile(nminusp, c(.025, .975)))
+
+# nonfiction versus poets
+nfminusp <- s[,3] - s[,2]
+print("Difference in age between nonfiction and poets")
+print(quantile(nfminusp, c(.025, .975)))
+
+# initialize new column for order
+s$order <- rep(NA, nit)
+
+# first number: group with min age
+# last number: group with max age
+for(i in 1:nit){
+  minAge <- which.min(s[i, c(1:3)])
+  maxAge <- which.max(s[i, c(1:3)])
+  s$order[i] <- as.numeric(paste(minAge, maxAge, sep=""))
+}
+
+# 1 = novelists, 2 = poets, 3 = nonfiction
+ageOrder <- sort(table(s$order), decreasing=TRUE)
+
+# poets < novelists < nonfiction: 213
+print("Probability that average age of death is poets < novelists < nonfiction")
+print(ageOrder[[1]]/nit)
+
+# poets < nonfiction < novelists: 231
+print("Probability that average age of death is poets < nonfiction < novelists")
+ageOrder[[2]]/nit
+
+# novelists < poets < nonfiction: 123
+print("Probability that average age of death is novelists < poets < nonfiction")
+ageOrder[[3]]/nit
+```
+
+These conclusions are very similar to those from the hard-coded model that did not rely on JAGS.
+
+### COVID-19 Test Sensitivity (JAGS)
+
+This dataset is of 1425 COVID-19 tests performed on people later confirmed to be infected with COVID-19. It is organized by t, the number of days after suspected infection when the test was administered, and includes n, the amount of people who had a test t days after infection, and x, the number of tests (of the n tests done at infection age t) that were positive.
+
+The goal is to use this information to estimate test sensitivity as a function of days since infection. After double checking the trace plots and histograms for expected behavior (hidden for the sake of concision), the credible intervals for sensitivty at 3, 5, and 10 days after infection can be determined.
+
+The below models are assumed:
+
+Xt ~ Binom(nt, pt)
+
+$Pt = logistic(\alpha - \beta(log(t) - \gamma)^2 + \delta(log(t) - \gamma)^3)$
+
+Priors are assumed to be spread out normal distributions with mean 0 and precision 0.0001.
+
+```{r}
+# read in data
+dat <- read.csv("http://www.stat.yale.edu/~jtc5/data/kucirka.csv")
+
+# calculated column for ratio x/n
+dat$ratio <- dat$x / dat$n
+
+# dbin(p, n) used to determine x value
+# ilogit (inverse of the logit function) used to model logistic function
+# note the need to convert to log base 10; JAGS assumes log is in base e
+# dnorm(mean, precision) used for normal priors
+mymod <- " 
+  model{
+    for(i in 1:length(x)){
+      x[i] ~ dbin(ilogit(a - b*(log(t[i])/log(10) - c)^2 + d*(log(t[i])/log(10) - c)^3), n[i])
+    }
+    a ~ dnorm(0, .0001)
+    b ~ dnorm(0, .0001)
+    c ~ dnorm(0, .0001)
+    d ~ dnorm(0, .0001)
+  }
+" 
+
+# for deviance
+load.module("dic")
+
+jm <- jags.model(textConnection(mymod),
+                 data=list(x=dat$x, n=dat$n, t=dat$t))
+
+update(jm, 100000) # update for good behavior
+cs <- coda.samples(jm, c("a","b","c", "d", "deviance"), 100000) # run enough times for good behavior
+s <- as.data.frame(cs[[1]])
+```
+
+```{r eval=F}
+# traceplots
+plot(s$a[90000:100000], ylab="Alpha")
+plot(s$b[90000:100000], ylab="Beta")
+plot(s$c[90000:100000], ylab="Gamma")
+plot(s$d[90000:100000], ylab="Delta")
+plot(s$deviance[90000:100000], ylab="Deviance")
+
+# histograms
+truehist(s$a, xlab="Alpha")
+truehist(s$b, xlab="Beta")
+truehist(s$c, xlab="Gamma")
+truehist(s$d, xlab="Delta")
+truehist(s$deviance, xlab="Deviance")
+```
+
+```{r}
+# 10th and 90th percentiles
+arange <- quantile(s[,1], c(.1, .9))
+brange <- quantile(s[,2], c(.1, .9))
+crange <- quantile(s[,3], c(.1, .9))
+drange <- quantile(s[,4], c(.1, .9))
+# can plug these values into logistic function wtih different variable for t
+
+# logistic function
+logistic <- function(x){
+  1/(1+exp(-x))
+}
+
+# function for credible interval
+# input is day t
+credI <- function(t){
+  b10 <- logistic(arange[[1]]-brange[[1]]*(log10(t)-crange[[1]])^2 +
+                    drange[[1]]*(log10(t)-crange[[1]])^3) # 10th percentile
+  b90 <- logistic(arange[[2]]-brange[[2]]*(log10(t)-crange[[2]])^2 + 
+                    drange[[2]]*(log10(t)-crange[[1]])^3) # 90th percentile
+  print(paste("The 80% credible interval for sensitivity at day", t, "is:",
+              round(min(b10, b90), 4), round(max(b10, b90), 4)))
+}
+
+credI(3) # t=3
+credI(5) # t=5
+credI(10) # t=10
+```
+
+```{r}
+# infection ages 1-36
+tvals <- seq(1, 36, by=.5)
+ten <- logistic(arange[[1]]-brange[[1]]*(log10(tvals)-crange[[1]])^2 +
+                  drange[[1]]*(log10(tvals)-crange[[1]])^3) # 10th percentile sensitivity at each infection age
+ninety <- logistic(arange[[2]]-brange[[2]]*(log10(tvals)-crange[[2]])^2 +
+                     drange[[2]]*(log10(tvals)-crange[[2]])^3) # 90th percentile sensitivity at each infection age
+
+# plot from 2a
+plot(dat$t, dat$ratio, cex=.7*sqrt(dat$n), col="red",
+     main="Fraction of Positive Tests by Day After Infection, Scaled by # of Tests",
+     xlab="t = days after infection", ylab="x/n = fraction of positive tests",
+     sub="Blue = 10th percentile sensitivity estimate, Green = 90th percentile sensitivity estimate")
+lines(tvals, ten, col="blue") # curve for 10th percentile sensitivity
+lines(tvals, ninety, col="green") # curve for 90th percentile sensitivity
+```
+
+The blue (10th percentile) and green (90th percentile) curves follow the general flow of the observed data, indicating that the JAGS model did perform as expected and outputted reasonable parameters. Knowing that the model is an appropriate fit, additional inferences can be made about the maximum test sensitivity.
+
+```{r}
+# new calculated column for max sensitivty
+s$maxSensitivity <- rep(NA, dim(s)[1])
+
+# function to evaluate sensitivity at days 1-36
+for(i in 1:dim(s)[1]){
+  t <- seq(1, 36, by=.001) # evaluate sensitivity at days 1-36 using fine grid of .001
+  # outputs sensitivity at days 1-36 using a, b, c, d values associated with this trial
+  eachDaySensitivity <- logistic(s$a[i] - s$b[i]*(log10(t) - s$c[i])^2 + s$d[i]*(log10(t) - s$c[i])^3)
+  s$maxSensitivity[i] <- max(eachDaySensitivity) # gives max sensitivity for this trial
+  # gives max day for this trial; divide by 1000 to account for grid
+  s$maxDay[i] <- which.max(eachDaySensitivity)/1000
+}
+
+# histogram for maximum sensitivity
+truehist(s$maxSensitivity, xlab="Maximum Sensitivity")
+# credible interval for maximum sensitivity using quantile
+print(paste("The 95% credible interval for the maximum test sensitivity is:",
+            round(quantile(s$maxSensitivity, .025), 4), round(quantile(s$maxSensitivity, .975), 4)))
+```
+
+### Heart Attack Percentage Reduction (JAGS)
+
+A drug is thought to reduce the risk of coronary heart disease. It is given to 4081 asymptomatic middle-aged men. 2051 men receive 600 mg of the drug twice daily; 2030 men receive placebo. There are 56 heart attacks in the treatment group, and 84 heart attacks in the control group. What is the percentage reduction in the rate of heart attacks? (This analysis validated the results proposed in the Helsinki Heart Study.)
+
+```{r}
+# model
+mymodel <- "  
+model{
+  x1 ~ dbin(mu1, 2051)
+  x2 ~ dbin(mu2, 2030)
+  mu1 ~ dunif(0, 1)
+  mu2 ~ dunif(0, 1)
+}
+"
+
+# compile
+jm <- jags.model(textConnection(mymodel), data = list(x1=56, x2=84))
+
+# MCMC
+cs <- coda.samples(jm, variable.names = c("mu1", "mu2"), n.iter = nit)
+
+# dataframe of results
+s <- as.data.frame(cs[[1]])
+
+print("95% CI for treatment:")
+print(quantile(s[,1], c(.025, .975)))
+print("95% CI for control:")
+print(quantile(s[,2], c(.025, .975)))
+
+# new column for percent reduction
+s$pRed <- ((s$mu2 - s$mu1)/s$mu2)*100
+print("95% CI for percentage reduction:")
+print(quantile(s[,3], c(.025, .975)))
+```
+
+This 95% CI for percentage reduction approximates that  given in the paper (8.2 to 52.6).
+
+### Mediation and Sunscreen Use (JAGS)
+
+100 people who are planning a beach vacation are selected. Half of the group receives a leaflet with facts about skin cancer, while the other half does not. When each person arrives at the beach, they are asked 1) what they believe the likelihood that they will get skin cancer at some point in their lives and 2) whether they were planning to use sunscreen. Does the leaflet increase the likelihood that people plan to use sunscreen? If so, is any part of this effect due to how likely people think they are to get skin cancer (i.e., is it a mediator)?
+
+```{r}
+# read data
+sb <- read.csv("/Users/kellyfarley/Desktop/Yale/Junior/5 Probability/Completed Psets/Pset 10/mediation-data_Wright-London.csv")
+
+# model
+regmod <- "model{
+  for(i in 1:length(y)){
+    m[i] ~ dnorm(alpham + beta1*x[i], taum)
+    y[i] ~ dnorm(alphay + beta2*m[i] + beta3*x[i], tauy)
+  }
+  alpham ~ dnorm(0,.0001)
+  alphay ~ dnorm(0,.0001)
+  beta1 ~ dnorm(0,.0001)
+  beta2 ~ dnorm(0,.0001)
+  beta3 ~ dnorm(0,.0001)
+  taum ~ dgamma(.01,.01)
+  tauy ~ dgamma(.01,.01)
+  sigm <- 1 / sqrt(taum)
+  sigy <- 1 / sqrt(tauy)
+}" 
+
+# compile
+jm <- jags.model(file = textConnection(regmod), data = list(x=sb$leaflet, m=sb$likely, y=sb$plan))
+
+# MCMC
+cs <- coda.samples(jm, variable.names = c("beta1", "beta2", "beta3", "sigm", "sigy"), n.iter = 1000)
+
+# dataframe of results
+s <- as.data.frame(cs[[1]])
+
+# mediation proportion
+s$mp <- s$beta1 * s$beta2 / (s$beta1 * s$beta2 + s$beta3)
+
+# posterior mean
+mean(s$mp)
+
+# 95% CI
+quantile(s$mp, c(.025, .975))
+```
+
+### Bayesian A/B Website Testing
+
+There are two versions of a website home page. To determine which version is better, the website is coded such that each visitor will be shown version F or version B. During the experiment, there were 237 visitors that saw version F, 8 of whom signed up for membership; there were 215 visitors that saw version B,  11 of whom signed up for membership. Given this data, what is the probability that version B is better for signups than version F?
+
+```{r}
+## parameter space same for F and B: from 0 to 1, in increments of 0.001
+## restructured so that all values keep 3 decimal places
+fthetas <- sapply(seq(0, 1, by=0.001), format, nsmall=3)
+bthetas <- fthetas
+## matrix combining both thetas using paste
+allthetas <- outer(fthetas, bthetas, paste)
+## first 4 numbers in a cell will be fthetas; last 4 numbers in a cell will be bthetas
+
+## uniform prior with same dimensions as allthetas
+## each cell has probability 1/(1001*1001)
+prior <- matrix(1/(length(fthetas)*length(fthetas)), nrow = length(fthetas), ncol = length(fthetas))
+
+## likelihood using observed data
+fliks <- dbinom(8, 237, as.numeric(fthetas))
+bliks <- dbinom(11, 215, as.numeric(bthetas))
+  
+## posterior
+## since F and B are independent, multiplying their likelihoods probabilities together will give the combined likelihood for a pair
+## multiplication function to apply to each cell of matrix
+multiplyLiks <- function(x){
+  thisLik <- fliks[which(fthetas==substr(x, 1, 5))] * bliks[which(bthetas==substr(x, 7, 12))]
+  return(thisLik)
+}
+## apply to columns and rows
+allLiks <- apply(allthetas, c(1,2), multiplyLiks)
+
+## posterior
+post <- prior*allLiks/sum(prior*allLiks)
+
+## sum matrix entries where bthetas > fthetas
+## 1) loop through post matrix, 2) find corresponding value in allthetas, 3) if allthetas value meets specifications, add to sum
+
+## initialize sum to 0
+bBiggerProb <- 0
+
+## loop thru rows
+for(i in 1:dim(post)[1]){
+  ## loop thru columns
+  for(k in 1:dim(post)[2]){
+    thisTheta <- allthetas[i, k]
+    thisF <- substr(thisTheta, 1, 5)
+    thisB <- substr(thisTheta, 7, 12)
+    if(thisB > thisF){
+      bBiggerProb <- bBiggerProb + post[i, k]
+    }
+  }
+}
+
+print(bBiggerProb)
+```
+
+The probability that $V_B > V_F$ is approximately 0.8112291, where $V_B$ represents the probability a random probability will sign up when seeing version B and $V_F$ represents the same for version F.
+
+### Game Strategy Test
+
+There are two games that can be played repeatedly. In both games, you gain 1 dollar for tossing heads and lose 1 dollar for tossing tails. The games differ based on the probability for heads and tails.
+
+For Game 1: Toss a weighted coin with P(H) = 0.495
+
+For Game 2: If the net winning is a multiple of 3, toss coin 2a; else, toss coin 2b. Coin 2a has P(H) = 0.095, and Coin 2b has P(H) = 0.745.
+
+Game 1 is unfair and results in more losses than gains. Game 2 is also unfair. It is proposed that alternating between the two games, however, does result in gains in the long-run. The below simulation tests this theory by performing 1k repetitions of 10k plays of the game.
+
+```{r}
+# set seed
+set.seed(1234)
+
+# function to simulate mixed game
+tossSim <- function(){
+  nit <- 10000 # simulate 10k plays
+  winVec <- rep(NA, nit) # vector to store winnings at each step
+  winVec[1] <- 0 # set initial winnings to 0
+  
+  for(i in 2:nit){
+    currentWinnings <- winVec[i-1] # winnings up to this point
+
+    # choose which game
+    game <- sample(c(1, 2), 1, prob=c(.5, .5))
+    
+    # game 1
+    if(game==1){
+      toss <- sample(c(0, 1), 1, prob=c(0.495, 0.505)) # toss will give 0=H or 1=T
+    }
+    
+    # game 2
+    if(game==2){
+        # if winnings are multiple of 3, toss coin 2a: P(H)  = 0.095, P(T) = 0.905
+        if(currentWinnings %% 3 == 0){
+          toss <- sample(c(0, 1), 1, prob=c(0.095, 0.905)) # toss will give 0=H or 1=T
+        } else{
+          # otherwise, toss coin 2b: P(H) = 0.745, P(T) = 0.255
+          toss <- sample(c(0, 1), 1, prob=c(0.745, 0.255)) # toss will give 0=H or 1=T
+        }
+    }
+    
+    # H gain dollar
+    if(toss==0){
+      winVec[i] <- currentWinnings + 1
+    }
+    
+    # T lose dollar
+    if(toss==1){
+      winVec[i] <- currentWinnings - 1
+    }
+  }
+  
+  thisWin <<- winVec[nit] # will return winnings after 10k trials; stored as global variable
+}
+
+# run tossSim 1k times
+nrep <- 1000
+
+# vector for winnings at end of 10k plays
+endWin <- rep(NA, nrep)
+
+# fill vector by running tossSim
+for(j in 1:nrep){
+  tossSim()
+  endWin[j] <- thisWin # tossSim outputs thisWin as global variable
+}
+
+# histogram
+hist(endWin, xlab="Total Winnings", main="Histogram of Total Winnings after 10k Plays")
+
+# expected winnings
+mean(endWin)
+
+# probability of negative winning
+sum(endWin < 0) / length(endWin)
+```
+
+We can estimate the total expected winnings from 10k plays of the game with the mean result: 150.78
+
+We can estimate the probability that a person who does 10k plays of the game ends up with negative total winnings by dividing the amount of negative winnings observed by the total amount of winnings: 0.054
