@@ -1,0 +1,376 @@
+---
+title: "Appendix 11: Annotated R Code"
+author: "Kelly Farley"
+output:
+  pdf_document:
+    latex_engine : xelatex
+  html_document:
+   toc: yes
+   toc_float:
+     collapsed: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+```{r fig.height=3}
+# group data on sample mass and wire mass
+allDat <- read.csv("/Users/kellyfarley/Desktop/Pchem Lab/Labs/Experiment 5/RData/groupdat.csv")
+
+# function takes in trial name, connects bomb cal data with group data
+# outputs cleaned values of importance
+cleanDat <- function(trial){
+  # read bomb cal data
+  # some files are .txt, some are not
+  fileName <- paste("/Users/kellyfarley/Desktop/Pchem Lab/Labs/Experiment 5/RawData/", trial, sep="")
+  if(file.exists(fileName)==TRUE){
+    raw <- read.csv(fileName)
+  }
+  if(file.exists(fileName)==FALSE){
+    raw <- read.csv(paste(fileName, ".txt", sep=""))
+  }
+  
+  # clean bomb call data
+  # first 14 rows don't have data
+  db <- raw[c(14:dim(raw)[1]),]
+  # convert data frame
+  db <- as.data.frame(db)
+  # number of data points
+  n <- dim(db)[1]
+  # convert to character so can use substring
+  db$db <- as.character(db$db)
+  # extract time and temp
+  for(i in 1:n){
+    db$time[i] <- substr(db$db[i], 1, 8)
+    db$temp[i] <- as.numeric(substr(db$db[i], nchar(db$db[i]) - 6, nchar(db$db[i])))
+  }
+  # remove first column
+  db <- db[, c(2:3)]
+
+  # set mass values (in grams)
+  # mass of sample
+  mS <- allDat[allDat$run==trial, 3]
+  # mass of wire at start
+  mW <- allDat[allDat$run==trial, 4]
+  # mass of wire remaining
+  mWR <- allDat[allDat$run==trial, 5]
+  # calculated mass of wire combused
+  mCW <- mW - mWR
+  # mass of water in bucket
+  mB <- allDat[allDat$run==trial, 6]
+  
+  library(lubridate)
+  # convert to HMS formatting
+  db$time <- hms(db$time)
+  # convert time to minutes
+  db$time <- minute(db$time) + second(db$time)/60
+  # number of entries
+  nt <- dim(db)[1]
+  
+  # column for diff in T
+  db$tempdif <- rep(NA, n)
+  for(i in 2:n){
+    db$tempdif[i] <- db$temp[i] - db$temp[i-1]
+  }
+  
+  # define point a when diff in T > 0.002
+  # index of a
+  indexa <- min(which(db$tempdif > 0.002))
+  # temp at a
+  ta <- db$temp[indexa]
+  # time at a, to make sure seems reasonable
+  timea <- db$time[indexa]
+  
+  # define point c when diff in T < 0.002; after point a
+  # time remaining after a
+  remainingtime <- db$tempdif[indexa:n]
+  # index of c
+  indexc <- max(which(remainingtime > 0.002)) + indexa
+  # temp at c
+  tc <- db$temp[indexc]
+  # time at c, to make sure seems reasonable
+  timec <- db$time[indexc]
+  
+  # tc - ta
+  tca <- tc - ta
+  
+  # define point b when bucket temperature increased by 63% of tc - ta
+  theoreticaltb <- tca*0.63 + ta
+  # index of b
+  indexb <- max(which(db$temp < theoreticaltb))
+  # temp at b
+  tb <- db$temp[indexb]
+  # time at b, to make sure seems reasonable
+  timeb <- db$time[indexb]
+  
+  # make necesary values global
+  db <<- db
+  ta <<- ta
+  timea <<- timea
+  tb <<- tb
+  timeb <<- timeb
+  tc <<- tc
+  timec <<- timec
+  mS <<- mS
+  mCW <<- mCW
+  indexa <<- indexa
+  indexb <<- indexb
+  indexc <<- indexc
+  nt <<- nt
+  mB <<- mB
+}
+
+plotDat <- function(trial){
+  # run to get necessary global variables
+  cleanDat(trial)
+  
+  # plot with time a in red, timeb in purple, time c in blue
+  plot(db$time, db$temp, xlab="Time (minutes)", ylab="Temperature (°C)")
+  abline(v=timea, col="#cc2121")
+  abline(v=timeb, col="#8449d1")
+  abline(v=timec, col="#6bcbff")
+  abline(a=as.numeric(toString(regT[regT$trial==trial  & regT$time=="preperiod", 5])), b=as.numeric(toString(regT[regT$trial==trial & regT$time=="preperiod", 3])), lty=2)
+  abline(a=as.numeric(toString(regT[regT$trial==trial  & regT$time=="postperiod", 5])), b=as.numeric(toString(regT[regT$trial==trial  & regT$time=="postperiod", 3])), lty=2)
+  text(timea-.5, ta+.25, labels="a", col="#cc2121")
+  text(timeb+.25, tb+.5, labels="b", col="#8449d1")
+  text(timec+.25, tc-.15, labels="c", col="#6bcbff")
+}
+
+regFit <- function(trial){
+  # run to get necessary global variables
+  cleanDat(trial)
+  
+  # fit regression lines
+  
+  # error represents 95% CI: multiply by appropriate t-value
+  # for dof ~300, multiply by 1.968
+  tval <<- 1.968
+  
+  # preperiod
+  preperiod <- db[c(1:indexa),]
+  premodel <- lm(preperiod$temp ~ preperiod$time)
+  
+  # postperiod
+  postperiod <- db[c(indexc:nt),]
+  postmodel <- lm(postperiod$temp ~ postperiod$time)
+  
+    # function to extract desired regression coefficients
+    myReg <- function(db2){
+      # linear model
+      mod <- lm(db2$temp ~ db2$time)
+      # desired information
+      slope <- summary(mod)$coefficients[2]
+      slopeerror <- summary(mod)$coefficients[2,2]
+      yint <- summary(mod)$coefficients[1]
+      yinterror <- summary(mod)$coefficients[1,2]
+      rval <- summary(mod)$r.squared
+      dof <- summary(mod)$df[2]
+      # compile desired info
+      return(c(deparse(substitute(db2)), slope, slopeerror*tval, yint, yinterror*tval, rval, dof))
+    }
+    
+  # make necessary values global
+  rpre <<- summary(premodel)$coefficients[2]
+  rpreerror <<- (summary(premodel)$coefficients[2,1])*tval
+  rpost <<- summary(postmodel)$coefficients[2]
+  rposterror <<- (summary(postmodel)$coefficients[2,1])*tval
+  
+  # table of desired coefficients
+  regD <- as.data.frame((rbind(myReg(preperiod), myReg(postperiod))))
+  names(regD) <- c("time", "slope", "slope error", "yint", "yint error", "R^2", "dof")
+  # add trial
+  regD$trial <- rep(trial, 2)
+  # reorder
+  regD <- regD[, c(8, c(1:7))]
+  return(regD)
+}
+
+tempDat <- function(trial){
+  # run to get necessary global values
+  regFit(trial)
+  
+  # calculate delta t
+  deltaT <- tc - ta - rpre*(timeb - timea) - rpost*(timec-timeb)
+  deltaTerror <- sqrt((rpreerror*(timeb-timea))^2 + (rposterror*(timec-timeb))^2)
+  
+  # make necessary values global
+  deltaT <<- deltaT
+  deltaTerror <<- deltaTerror
+  
+  # table of desired coefficients
+  tempData <- cbind(trial, ta, tb, tc, rpre, rpreerror, rpost, rposterror, deltaT, deltaTerror)
+  return(tempData)
+}
+
+cDat <- function(trial){
+  # run to get necessary global values
+  tempDat(trial)
+  
+  # calculate cvcal
+  cvcal <- (-(mS)*(-26.434) + (-5.858)*mCW)/(deltaT)
+  
+  # calculate cvcal error
+  muerror <- 26.434*mS*sqrt((.0005/mS)^2+(.003/26.434)^2)
+  q1error <- 5.858*sqrt((.0005)^2+(.0005)^2)
+  numerror <- sqrt((muerror)^2+(q1error)^2)
+  num <- mS*26.434 - 5.858*mCW
+  cvcalerror <- cvcal*sqrt((numerror/num)^2+(deltaTerror/deltaT)^2)
+  
+  # theoretical cv
+  cvt <- (mB/1000) + (3.82*.12)
+  # convert kcal/K to kJ/K
+  cvt <- cvt*4.184
+  
+  # table of cv
+  cvData <- as.data.frame(cbind(trial, round(cvcal, 3), round(cvcalerror, 3), round(cvt, 3)))
+  names(cvData) <- c("trial", "cvcal", "cvcalerror", "cvpred")
+  return(cvData)
+}
+
+uDat <- function(trial){
+  # run to get necessary global values
+  tempDat(trial)
+  
+  # set average cvcal data
+  meancvcal <- meancv
+  errorcvcal <- meancverror
+
+  # calculate delta u
+  deltau <- -(meancvcal*deltaT -5.858*mCW)
+  
+  # delta u error
+  deltauerror <- sqrt((meancvcal*deltaT*sqrt((errorcvcal/meancvcal)^2+(deltaTerror/deltaT)^2))^2+(5.858*sqrt(.0005^2+.0005^2))^2)
+  
+  # calculate delta u molar
+  deltaum <<- deltau / (mS/178.23)
+  
+  # delta u molar error
+  deltaumerror <<- abs(deltaum) * sqrt((deltauerror/deltau)^2+(.005/.549)^2)
+  
+  udat <- as.data.frame(cbind(trial, round(deltau, 3), round(deltauerror, 3), round(deltaum, -1), round(deltaumerror, -1)))
+  names(udat) <- c("trial", "deltaU", "error in deltaU", "deltaUm", "error in deltaUm")
+  return(udat)
+}
+
+hDat <- function(trial){
+  # run to get necessary global variables
+  uDat(trial)
+  
+  # define average t in K
+  avgT <- (ta + tc)/2 + 273.15
+  
+  # calculate delta H molar
+  # rval in kJ/mol
+  rval <- 8.1345/1000
+  deltah <- deltaum + rval * 2.5 * avgT
+  
+  # delta H molar error
+  deltaherror <- deltaumerror + 2.5 * rval * sqrt(.005^2 + .005^2)
+  
+  # calculate delta H molar standard
+  
+  # H1
+  # cp for an and ph in J/mol*K
+  cps <- as.data.frame(cbind(c("an", "ph"), c(211.7, 220.3)))
+  deltacp <- 14*37.11 + 5*75.29 - (33/2)*29.36 - as.numeric(as.character(cps[cps$V1==substring(trial, 1, 2), 2]))
+  h1 <- deltacp*(298.15-avgT)
+  # convert to kJ/mol
+  h1 <- h1/1000
+  
+  # H2
+  cps <- cbind(cps, c(143.3, 151))
+  names(cps) <- c("sample", "cp", "vm")
+  # select appropriate vm
+  vm <- as.numeric(as.character(cps[cps$sample==substring(trial, 1, 2), 3]))
+  deltaV <- 5*18.1 - vm
+  deltaA <- 5*(2.1E-4)*18.1 - (12.4E-4)*vm
+  h2 <- (deltaV - avgT*deltaA)*(1-30.3975)
+  # convert to kJ/mol
+  h2 <- h2/10000
+  
+  # H3
+  h3 <- 14*1.1*37.11*5 - (33/2)*.31*29.36*30
+  # convert to kJ/mol
+  h3 <- h3/1000
+  
+  # apply corrections
+  deltahst <- deltah + h1 + h2 + h3
+  
+  # deltah of formation
+  deltahf <- 14*(-393.51)+5*(-285.83)-deltahst
+  
+  hdat <- as.data.frame(cbind(trial, round(deltah, -1), round(deltaherror, -1), round(h1, 3), round(h2, 3), round(h3, 3), round(deltahst, 0), round(deltahf, 1)))
+  names(hdat) <- c("trial", "deltaHm", "error in deltaHm", "H1", "H2", "H3", "deltaHst", "deltaHf")
+  return(hdat)
+}
+
+# cv table
+cvDat <- as.data.frame(rbind(cDat("ba5"), cDat("ba7"), cDat("ba8"), cDat("ba9"), cDat("ba10"), cDat("ba11")))
+names(cvDat) <- c("Trial", "Cvcal", "Error", "Predicted")
+
+# convert data types
+cvDat$Trial <- as.character(cvDat$Trial)
+cvDat$Cvcal <- as.numeric(as.character((cvDat$Cvcal)))
+cvDat$Error <- as.numeric(as.character((cvDat$Error)))
+
+# weighted average cvcal
+meancv <- round(sum(cvDat$Cvcal/(cvDat$Error)^2) / sum(1/(cvDat$Error)^2), 3)
+
+# error in mean cvcal
+meancverror <- round(sqrt(1/sum(1/cvDat$Error)^2)*tval, 3)
+
+# average cvt
+meancvt <- round(mean(na.omit(as.numeric(as.character(cvDat$Predicted)))), 3)
+
+# add average to database
+cvDat$Predicted <- as.numeric(as.character(cvDat$Predicted))
+cvDat <- as.data.frame(rbind(cvDat, c("Weighted Avg", meancv, meancverror, meancvt)))
+print(cvDat)
+
+# regression table
+regT <- as.data.frame(rbind(regFit("ba5"), regFit("ba7"), regFit("ba8"), regFit("ba9"), regFit("ba10"), regFit("ba11"), regFit("an4"), regFit("an5"), regFit("an6"), regFit("ph1"), regFit("ph3"), regFit("ph4"), regFit("ph5")))
+print(regT)
+
+# temp table
+tempT <- as.data.frame(rbind(tempDat("ba5"), tempDat("ba7"), tempDat("ba8"), tempDat("ba9"), tempDat("ba10"), tempDat("ba11"), tempDat("an4"), tempDat("an5"), tempDat("an6"), tempDat("ph1"), tempDat("ph3"), tempDat("ph4"), tempDat("ph5")))
+print(tempT)
+
+# internal energy table
+uTable <- as.data.frame(rbind(uDat("an4"), uDat("an5"), uDat("an6"), uDat("ph1"), uDat("ph3"), uDat("ph4"), uDat("ph5")))
+print(uTable)
+
+# enthalpy table
+hTable<- as.data.frame(rbind(hDat("an4"), hDat("an5"), hDat("an6"), hDat("ph1"), hDat("ph3"), hDat("ph4"), hDat("ph5")))
+print(hTable)
+
+# remove incomplete combustion ph4
+hTable <- hTable[hTable$trial!="ph4",]
+
+# an trials
+anDat <- hTable[substr(hTable$trial,0, 2)=="an",]
+
+# ph trials
+phDat <- hTable[substr(hTable$trial,0, 2)=="ph",]
+
+# average standard molar enthalpy of combustion
+sampleNames <- c("an", "ph")
+expComb <- round(c(mean(as.numeric(as.character(anDat$deltaHst))), mean(as.numeric(as.character(phDat$deltaHst)))), 0)
+litComb <- c(-7063.8, -7048.1)
+combError <- round(abs((litComb - expComb)/litComb)*100, 1)
+
+# average standard molar enthalpy of formation
+expF <- round(c(mean(as.numeric(as.character(anDat$deltaHf))), mean(as.numeric(as.character(phDat$deltaHf)))), 1)
+litF <- c(127.5, 110.1)
+fError <- round(abs((litF - expF)/litF)*100, 1)
+
+# lit comparison
+compareLit <- cbind(sampleNames, expComb, litComb, combError, expF, litF, fError)
+print(compareLit)
+
+
+# plot thermogram
+for(i in 1:dim(allDat)[1]){
+  plotDat(allDat$run[i])
+}
+```

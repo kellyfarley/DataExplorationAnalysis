@@ -1,0 +1,287 @@
+---
+title: "Appendix 10: Annotated R Code"
+author: "Kelly Farley"
+output:
+  pdf_document:
+    latex_engine : xelatex
+  html_document:
+   toc: yes
+   toc_float:
+     collapsed: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+# Trial 1
+
+(1)  Import Raw Data
+
+```{r}
+# a-value table
+aval <- read.csv("/Users/kellyfarley/Desktop/Pchem Lab/Labs/Experiment 6/R/aval.csv")
+names(aval) <- c("temp", "a")
+
+# raw trial data
+trial1 <- read.csv("/Users/kellyfarley/Desktop/Pchem Lab/Labs/Experiment 6/R/exp6trial1.csv")
+# rename columns
+names(trial1) <- c("tempc", "emf")
+# convert temp from C to K
+trial1$temp <- trial1$tempc + 273.15
+trial1 <- trial1[, c(1, 3, 2)]
+```
+
+(2) Standard Ecell at New Temperature
+
+```{r}
+# define constants
+rc <- 8.3145 # ideal gas constant in J/mol*K
+n <- 1 # number of e- transferred
+f <- 96485 # faraday's constant in C/mol
+# standard cell potential
+eg <- 0.356 # standard ecell for graphite, Fe(CN)6^3-, Fe(CN)6^4-
+ec <- 0.2226  # standard ecell for Cl-, AgCl, Ag
+# enthalpies of formation, converted to J/mol
+hfecn3 <- 561.9*1000
+hfecn4 <- 455.6*1000
+hcl <- -167.1*1000
+hagcl <- -127.01*1000
+# gibbs energies of formation, converted to J/mol
+gfecn3 <- 729.3*1000
+gfecn4 <- 694.9*1000
+gcl <- -131.3*1000
+gagcl <- -109.8*1000
+# standard temperature
+ts <- 298
+
+# half cell: graphite, Fe(CN)6^3-
+# half cell enthalpy
+hg <- hfecn4 - hfecn3
+# half cell gibbs energy
+gg <- gfecn4 - gfecn3
+# e half cell
+trial1$eg <- eg + ((hg-gg)/(ts*n*f))*(trial1$temp - ts)
+
+# half cell: Cl-, AgCl, Ag
+# half cell enthalpy
+hc <- hcl - hagcl
+# half cell gibbs energy
+gc <- gcl - gagcl
+# e half cell
+trial1$ec <- ec + ((hc-gc)/(ts*n*f))*(trial1$temp - ts)
+
+# combining half cells
+trial1$thermochem <- trial1$eg - trial1$ec
+```
+
+(3) Theoretical Ecell - Nerst Equation
+
+```{r}
+# define given constants
+mcl <- 4.5 # given molar concentration of Cl- in M
+ycl <- 0.593 # given activity coefficient of Cl-
+
+# calculate concentrations in mol/L
+# using measured gram amounts in .05 L solution
+mfecn3 <- .0981/(329.24*.05)
+mfecn4 <- .1133/((368.35+18.3)*.05)
+mkcl <- (.2019+.1817)/(74.5513*.05)
+mk <- mkcl + 3*mfecn3 + 4*mfecn4
+
+# calculate a-value
+# linear model
+mod <- lm(aval$a ~ aval$temp)
+# desired info
+slope <- summary(mod)$coefficients[2]
+slopeerror <- summary(mod)$coefficients[2,2]
+yint <- summary(mod)$coefficients[1]
+yinterror <- summary(mod)$coefficients[1,2]
+rval <- summary(mod)$r.squared
+dof <- summary(mod)$df[2]
+# set tval for 9 dof
+tval <- 2.262
+# compile desired info
+areg <- c(slope, slopeerror*tval, yint, yinterror*tval, rval, dof)
+# assign a values
+aslope <- slope
+ayint <- yint
+# define a at each temperature
+trial1$aval <- aslope*trial1$tempc + ayint 
+
+# calculate ionic strength
+zfecn3 <- -3
+zfecn4 <- -4
+zcl <- -1
+zk <- 1
+is <- .5*(mfecn3*(zfecn3)^2+mfecn4*(zfecn4)^2+mkcl*(zcl)^2 + mk*(zk)^2)
+
+# calculate activity coefficient y
+
+# for Fe(CN)6^3-
+trial1$ly3 <- -(trial1$aval)*(zfecn3)^2*sqrt(is)/(1+sqrt(is)) # debye-huckel
+trial1$y3 <- 10^trial1$ly3 # activity coefficient
+
+# for Fe(CN)6^4-
+trial1$ly4 <- -(trial1$aval)*(zfecn4)^2*sqrt(is)/(1+sqrt(is)) # debye-huckel
+trial1$y4 <- 10^trial1$ly4 # activity coefficient
+
+# calculate ecell
+# note that r defines log = ln
+trial1$nerst <- trial1$thermochem - rc*trial1$temp/(n*f)*log(mfecn4/(mfecn3*mcl)) - rc*trial1$temp/(n*f)*log(trial1$y4/(trial1$y3*ycl))
+```
+
+(4) Gibbs Free Energy, Entropy, and Enthalpy
+
+```{r}
+# gibbs free energy
+trial1$gcell <- -n*f*trial1$emf
+
+# entropy
+# find slope of ecell vs temp
+mod <- lm(trial1$emf ~ trial1$temp)
+# desired info
+slope <- summary(mod)$coefficients[2]
+slopeerror <- summary(mod)$coefficients[2,2]
+yint <- summary(mod)$coefficients[1]
+yinterror <- summary(mod)$coefficients[1,2]
+rval <- summary(mod)$r.squared
+dof <- summary(mod)$df[2]
+# set tval for 18 dof
+tval <- 2.101
+# compile desired info
+etreg <- c(slope, slopeerror*tval, yint, yinterror*tval, rval, dof)
+# calculate entropy
+trial1$scell <- n*f*slope
+
+# hcell
+trial1$hcell <- trial1$gcell + trial1$temp * trial1$scell
+```
+
+# Trial 2
+
+(1)  Import Raw Data
+
+```{r}
+# raw trial data
+trial2 <- read.csv("/Users/kellyfarley/Desktop/Pchem Lab/Labs/Experiment 6/R/exp6trial2.csv")
+# rename columns
+names(trial2) <- c("tempc", "emf")
+# convert temp from C to K
+trial2$temp <- trial2$tempc + 273.15
+trial2 <- trial2[, c(1, 3, 2)]
+```
+
+(2) Standard Ecell at New Temperature
+
+```{r}
+# e half cell: graphite, Fe(CN)6^3-
+trial2$eg <- eg + ((hg-gg)/(ts*n*f))*(trial2$temp - ts)
+
+# e half cell: Cl-, AgCl, Ag
+trial2$ec <- ec + ((hc-gc)/(ts*n*f))*(trial2$temp - ts)
+
+# combining half cells
+trial2$thermochem <- trial2$eg - trial2$ec
+```
+
+(3) Theoretical Ecell - Nerst Equation
+
+```{r}
+# define a with slope
+trial2$aval <- aslope*trial2$tempc + ayint 
+
+# calculate activity coefficient y
+
+# for Fe(CN)6^3-
+trial2$ly3 <- -(trial2$aval)*(zfecn3)^2*sqrt(is)/(1+sqrt(is)) # debye-huckel
+trial2$y3 <- 10^trial2$ly3 # activity coefficient
+
+# for Fe(CN)6^4-
+trial2$ly4 <- -(trial2$aval)*(zfecn4)^2*sqrt(is)/(1+sqrt(is)) # debye-huckel
+trial2$y4 <- 10^trial2$ly4 # activity coefficient
+
+# calculate ecell
+# note that r defines log = ln
+trial2$nerst <- trial2$thermochem - rc*trial2$temp/(n*f)*log(mfecn4/(mfecn3*mcl)) - rc*trial2$temp/(n*f)*log(trial2$y4/(trial2$y3*ycl))
+```
+
+(4) Gibbs Free Energy, Entropy, and Enthalpy
+
+```{r}
+# gibbs free energy
+trial2$gcell <- -n*f*trial2$emf
+
+# entropy
+# find slope of ecell vs temp
+mod <- lm(trial2$emf ~ trial2$temp)
+# desired info
+slope <- summary(mod)$coefficients[2]
+slopeerror <- summary(mod)$coefficients[2,2]
+yint <- summary(mod)$coefficients[1]
+yinterror <- summary(mod)$coefficients[1,2]
+rval <- summary(mod)$r.squared
+dof <- summary(mod)$df[2]
+# set tval for 18 dof
+tval <- 2.101
+# compile desired info
+etreg2 <- c(slope, slopeerror*tval, yint, yinterror*tval, rval, dof)
+# calculate entropy
+trial2$scell <- n*f*slope
+
+# hcell
+trial2$hcell <- trial2$gcell + trial2$temp * trial2$scell
+```
+
+(5) Print Info
+
+```{r}
+# regression data
+print(aval)
+regdat <- as.data.frame(rbind(areg, etreg, etreg2))
+names(regdat) <- c("slope", "slope error", "yint", "yint error", "R^2", "dof")
+print(regdat)
+
+# mass data
+mdat <- as.data.frame(rbind(c("kcl", .2019+.1817, 0.05, mkcl), c("k3fecn6", .0981, 0.05, mfecn3), c("k4fecn6", .1133, 0.05, mfecn4)))
+names(mdat) <- c("sample", "mass", "volume", "conc")
+print(mdat)
+
+# ion data
+ion <- as.data.frame(c("k", "cl", "fecn3", "fecn4"))
+ion$charge <- c("+1", "-1", "-3", "-4")
+ion$conc <- c(mk, mcl, mfecn4, mfecn4)
+ion$activitycoeff <- c(NA, 0.593, "varies", "varies")
+ion$is <- rep(is, 4)
+names(ion) <- c("ion", "charge", "concentration", "activity coeff", "ionic strength")
+print(ion)
+
+# thermochemical data
+tcdat <- as.data.frame(rbind(c("fecn3", hfecn3, gfecn3), c("fecn4", hfecn4, gfecn4), c("cl", hcl, gcl), c("agcl", hagcl, gagcl), c("graphite half", hg, gg), c("cl half", hc, gc)))
+names(tcdat) <- c("sample", "hf", "gf")
+print(tcdat)
+
+# all data
+print(trial1)
+print(trial2)
+
+# comparing predicted gibbs to actual
+eg*(-1)*n*f/1000
+gg
+ec*(-1)*n*f/1000
+gc
+
+# hcell variation
+sd(trial1$hcell)
+sd(trial2$hcell)
+# as temp changes
+cor(trial1$tempc, trial1$hcell)
+cor(trial2$tempc, trial2$hcell)
+
+# correlation of theoretical and experimental
+cor(trial1$emf, trial1$nerst)
+cor(trial2$emf, trial2$nerst)
+
+# difference between nerst and emf
+mean(mean(trial1$nerst - trial1$emf), mean(trial2$nerst - trial2$emf))
+```
