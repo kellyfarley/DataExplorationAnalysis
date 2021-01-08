@@ -1,0 +1,376 @@
+---
+title: "Kelly Farley Portfolio"
+output:
+  html_document:
+    df_print: paged
+date: "4/17/2020"
+urlcolor: red
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=F, warning=F)
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+# S&DS 230: Data Exploration and Analysis
+
+## Course Description
+
+Survey of statistical methods using the R programming language applied to real world data problems. Exploration of data scraping, cleaning, and dealing with missing data. Application of regression, non-parametric tests, and statistical graphics. Emphasis on learning to write about data analysis results.
+
+## Key Skills
+
+* **R Programming Language**: data structures, functions, loops, libraries
+* **RMarkdown**: syntax, formatting (bold, headers, italics), inserting links and images, commenting for clarity
+* **Data Scraping**: scraping publically available information; cleaning and subsetting using regular expressions; converting data types
+* **Graphics**: visual understanding of data before proceeding with analysis; data transformation; scatterplots, histograms, boxplots, matrix plots
+* **Statistical Analysis**: working with categorical versus continuous data; t-tests, bootstrapped confidence intervals, correlation, analysis of variance, non-parametric tests
+* **Regression**: ensuring model assumptions are met; adjusted R^2, BIC, Cp statistic for model selection; general linear models; logistic regression
+
+## Coding Samples
+
+This course included 10 weekly problem sets, with a total of over 3k lines of Rmarkdown. Below are samples that showcase transferrable skillsets, with driving questions that inspired the analysis.
+
+1. **Numeric Data Cleaning**
+
+2. **Text Data Cleaning**
+
+3. **Correlation**
+
+4. **Generalized Linear Model**
+
+### Numeric Data Cleaning
+
+Below, I clean two databases with about 5000 total entries for race times for the New Haven 5k. I used bootstrapped confidence intervals to expand the reach of the data.
+
+*Driving question*: Did runners who competed in both 2017 and 2018 improve? Does this improvement differ by gender?
+
+```{r}
+# load 5k data
+nh2017 <- read.csv("http://reuningscherer.net/s&ds230/data/NHRR2017.csv", as.is=T) # as.is keeps characters from being converted into factors
+nh2018 <- read.csv("http://reuningscherer.net/s&ds230/data/NHRR2018.csv", as.is=T)
+
+library(lubridate)
+convertTimes <- function(v) {
+  hourplus <- nchar(v) == 7
+  wrongformat <- nchar(v) == 8
+  outtimes <- ms(v)
+  if (sum(hourplus) > 0) { # if there is at least 1 time that exceeds 1 hr
+    outtimes[hourplus] <- hms(v[hourplus])
+  }
+  if (sum(wrongformat) > 0) { # if there is at least 1 time in wrong format
+    outtimes[wrongformat] <- ms(substr(v[wrongformat],1,5))
+  }
+  outtimes <- as.numeric(outtimes)/60
+  return(outtimes)
+}
+
+cleanNHData <- function(data) {
+  data$Div[data$Div == ""] <- NA
+  data$Gender <- substr(data$Div, 1, 1)
+  data$AgeGrp <- substr(data$Div, 2, nchar(data$Div))
+  data$Nettime_min <- convertTimes(data$Nettime)
+  data$Time_min <- convertTimes(data$Time)
+  data$Pace_min <- convertTimes(data$Pace)
+  data <- data[data$Name != "", ] #Replace dataset with same dataset such that Name is not equal to ""
+  return(data)
+}
+
+nh2017 <- cleanNHData(nh2017)
+nh2018 <- cleanNHData(nh2018)
+nh2017Unq <- nh2017[duplicated(nh2017$Name) != "TRUE", ]
+nh2018Unq <- nh2018[duplicated(nh2018$Name) != "TRUE", ]
+
+# new database of runners that ran in both years
+repeatrunners <- intersect(nh2017Unq$Name, nh2018Unq$Name)
+w <- nh2018Unq$Name %in% repeatrunners 
+nhcombined <- data.frame(Name = nh2018Unq$Name[w],
+                         Gender = nh2018Unq$Gender[w],
+                         Nettime_2018 = nh2018Unq$Nettime_min[w])
+nhcombined <- merge(nhcombined, nh2017Unq[, c("Name", "Nettime_min")]) # combining runners
+nhcombined <- nhcombined[!is.na(nhcombined$Gender),] # removing entries that have NA values for gender
+colnames(nhcombined)[4] <- "Nettime_2017"
+
+# examining improvement from 2017 to 2018
+nhcombined$Improvement <- nhcombined$Nettime_2017 - nhcombined$Nettime_2018
+
+# cleaning outliers
+nhcombined <- nhcombined[nhcombined$Improvement < 50 & nhcombined$Improvement > -50,]
+
+# histogram using ggplot2
+library(ggplot2)
+library(extrafont)
+ggplot(nhcombined, aes(x=Improvement)) + geom_histogram(aes(fill=..count..)) + scale_fill_gradient("Count", low="green", high="red") + labs(title="Improvement from 2017 to 2018 Without Outliers",x="Minutes", y = "Count") + theme(text=element_text(family="Palatino"))
+
+# examining improvement by gender using bootstrapped confidence intervals
+females <- nhcombined[nhcombined$Gender == "F", 5]
+males <- nhcombined[nhcombined$Gender == "M", 5]
+
+#n <- dim(nhcombined)[1]
+n_samp <-  10000   #number of samples
+fmeans <-  rep(NA, n_samp)
+mmeans <- rep(NA, n_samp)
+
+for(i in 1:n_samp){
+  #get a sample with replacement
+  f <-  sample(females, length(females), replace=T)
+  #store sample mean for this sample
+  fmeans[i] <-  mean(f)
+}
+
+for(i in 1:n_samp){
+  #get a sample with replacement
+  m <-  sample(males, length(males), replace=T)
+  #store sample mean for this sample
+  mmeans[i] <-  mean(m)
+}
+
+cif <-  quantile(fmeans, c(.025, .975)) # female confidence interval
+cim <-  quantile(mmeans, c(.025, .975)) # male confidence interval
+
+ggplot(nhcombined,aes(x=Improvement)) + theme_bw() + geom_histogram(data=subset(nhcombined,Gender == "F"),fill = "red", alpha = 0.2) + geom_histogram(data=subset(nhcombined,Gender == "M"),fill = "blue", alpha = 0.2) + labs(title="Improvement from 2017 to 2018 by Sex",x="Improvement in Minutes", y = "Count") + theme(text=element_text(family="Palatino"))
+```
+
+*Conclusion*: Improvement is centered at -0.93 minutes and is roughly normally distributed (but more right-skewed). Interestingly, runners seem more likely to increase in running time than decrease, perhaps because this is primarily a beginners' race. To expand the reach of our data, we can use bootstrapped confidence intervals for the improvement times by gender. Both confidence intervals are negative and do not include 0, indicating that both male and female repeat runners did not improve from 2017 to 2018. Moving forward, perhaps it would be interesting to perform the same analysis on a marathon database and see if more advanced runners behave differently from year to year than novice runners.
+
+### Text Data Cleaning
+
+Below, I clean a data set with 126 entries for favorite foods, down to 10 categories.
+
+*Driving question*: What are the favorite foods of students, and with what frequency do they occur?
+
+```{r}
+# loading in data about favorite types of food
+food <- read.csv("http://reuningscherer.net/S&DS230/data/food.csv", header=T)
+cuisine <- food$fav_cuisine
+
+cuisine <- as.character(cuisine) # converted to character
+str(unique(cuisine)) # there are 61 unique values in cuisine; to find any significant patterns, let's try to get this down to 10
+
+cuisine2 <- cuisine # create a backup of data to revert to
+cuisine2 <- tolower(cuisine2) # convert data to lower case
+cuisine2 <- gsub(" food","", cuisine2) # remove food
+cuisine2 <- trimws(cuisine2) # remove trailing spaces
+
+# remove this and anything that follows
+removeThis <- c(" and ", " or ", " cuisine")
+for (i in 1:length(removeThis)){
+  cuisine2 <- gsub(paste("(.*)", removeThis[i],".*", sep=""),"\\1", cuisine2)
+}
+
+cuisine2 <- sort(cuisine2) # down to 39
+
+# instances with same entry but with extra words
+searchvec1 <- c("american", "italian", "chinese", "colombian", "indian")
+for (i in 1:length(searchvec1)){
+  cuisine2 <- gsub(paste(".*", searchvec1[i], ".*", sep=""), searchvec1[i], cuisine2)
+}
+
+# recoding specific food as location
+searchvec2 <- c("sushi", "orange chicken", "nan", "mac")
+replacevec <- c("japanese", "chinese", "indian", "american")
+for (i in 1:length(searchvec2)){
+  cuisine2 <- gsub(paste(".*", searchvec2[i], ".*", sep=""), replacevec[i], cuisine2)
+}
+
+# combining colombian and hispanic and mexican
+hispanicFood <- c("colombian", "hispanic", "mexican")
+for (i in 1:length(hispanicFood)){
+  cuisine2 <- gsub(paste(".*", hispanicFood[i], ".*", sep=""), "hispanic", cuisine2)
+}
+
+# combining don't have one
+allFood <- c("i do not like", "don't have one", "i do not like", "all")
+for (i in 1:length(allFood)){
+  cuisine2 <- gsub(paste(".*", allFood[i], ".*", sep=""), "none", cuisine2)
+}
+
+#specific food item
+specificFood <- c("sub sandwhiches", "wraps", "chicken", "lean", "seafood", "barbecue")
+for (i in 1:length(specificFood)){
+  cuisine2 <- gsub(paste(".*", specificFood[i], ".*", sep=""), "specific", cuisine2)
+}
+
+# asian: vietnamese, nepali
+asianFood <- c("vietnamese","nepali")
+for (i in 1:length(asianFood)){
+  cuisine2 <- gsub(paste(".*", asianFood[i], ".*", sep=""), "asian", cuisine2)
+}
+
+# middle east: arabic, lebanese, turkish
+middleFood <- c("arabic", "lebanese", "turkish")
+for (i in 1:length(middleFood)){
+  cuisine2 <- gsub(paste(".*", middleFood[i], ".*", sep=""), "mideast", cuisine2)
+}
+
+# european: spanish, french, greek
+europeanFood <- c("spanish", "french", "greek")
+for (i in 1:length(europeanFood)){
+  cuisine2 <- gsub(paste(".*", europeanFood[i], ".*", sep=""), "european", cuisine2)
+}
+
+#other with only 1 observation: african, jamacian
+otherFood <- c("african", "jamaican")
+for (i in 1:length(otherFood)){
+  cuisine2 <- gsub(paste(".*", otherFood[i], ".*", sep=""), "other", cuisine2)
+}
+
+# top 15 categories: american, asian, chinese, europe, hispanic, indian, italian, japanese, korean, mideast, none, other, specific, thai --> we can narrow down the less popular asian food categeories a little more (so other than chinese); thought about combining european with italian, but italian is so popular that it feels bad to generalize it!
+
+# combine asian with japanese, korean, thai, indian
+combinedAsian <- c("japanese", "korean", "thai", "indian")
+for (i in 1:length(combinedAsian)){
+  cuisine2 <- gsub(paste(".*", combinedAsian[i], ".*", sep=""), "asian", cuisine2)
+}
+
+# presenting in a table
+library(tools)
+cuisine2 <- toTitleCase(cuisine2)
+finaltab <- table(cuisine2)
+percents <- round(finaltab/sum(finaltab)*100)
+names(finaltab) <- paste(names(finaltab)," (", percents, "%)", sep = "")
+finaltab
+
+par(mar=c(5,9,4,2), cex=.9)
+barplot(sort(finaltab), horiz = T, las=1, col="blue", main="Favorite Cuisines", xlab="Count")
+```
+
+### Correlation
+
+Below, I clean class survey data to find any patterns of interest in survey responses to probability of taking the class, time spent exercising, time spent on coursework, social liberalness, and economic liberalness.
+
+*Driving question*: Which variables may be correlated and would be interesting to examine together?
+
+```{r}
+# importing data
+survey <- read.csv("http://reuningscherer.net/s&ds230/data/class.survey.230.2020.csv", header = TRUE, as.is = T)
+
+# cleaning class probability so values between 0 and 1
+cleanClassProb <- survey$ClassProb
+for (i in 1:length(cleanClassProb)){
+  if(!is.na(cleanClassProb[i])){ # don't consider NA values
+     if(cleanClassProb[i]>10){
+      cleanClassProb[i] <- cleanClassProb[i]/100
+     }
+    if(cleanClassProb[i]>1 & cleanClassProb[i]<=10){
+      cleanClassProb[i] <- cleanClassProb[i]/10
+     }
+  }
+}
+survey$ClassProb <- cleanClassProb
+
+# cleaning "how liberal are you?" economically and socially
+
+# cleaning social
+# issue: we notice that we have to trim the characters after the equal sign; we only want the first character in the response
+cleanSocial <- substr(survey$Social, 1, 1)
+str(cleanSocial) # currently as a character; need to convert to integer
+cleanSocial <- as.numeric(cleanSocial)
+str(cleanSocial)
+
+# cleaning econ
+# notice the same issues as before: only keep the first character, then convert to integer
+cleanEcon <- substr(survey$Econ, 1, 1)
+cleanEcon <- as.numeric(cleanEcon)
+
+# pushing to data frame
+survey$Social <- cleanSocial
+survey$Econ <- cleanEcon
+
+# out of curiosity: is social liberalness correlated with econ liberalness?
+# new data frame with social and econ
+cleanSocialEcon <- cbind(cleanSocial, cleanEcon)
+cleanSocialEcon <- na.omit(cleanSocialEcon)
+
+# jittered since the same answers show up a lot
+plot(jitter(cleanSocial, factor = .2), jitter(cleanEcon), pch = 19, col = "red", xlab="Social", ylab="Econ", main=paste("Econ vs Social Survey Data Jittered, correlation=", round(cor(cleanSocialEcon[,1],cleanSocialEcon[,2]),3)))
+
+# radii proportional to frequency to show in a different way
+freq <- c(table(cleanSocialEcon[,1], cleanSocialEcon[,2]))
+x1 <- rep(c(1:7), 7)
+y1 <- sort(x1)
+plot(x1, y1, pch = 19, col = "red", xlab="Social", ylab="Econ", cex = sqrt(freq), main=paste("Econ vs Social Survey Data Proportional, correlation=", round(cor(cleanSocialEcon[,1],cleanSocialEcon[,2]),3)))
+
+# cleaning exercise and coursework
+survey$Exercise <- as.numeric(survey$Exercise)
+survey$Coursework <- as.numeric(survey$Coursework)
+
+# new data frame with what we're interested in 
+survey2 <- survey[,c(1,9, 10, 13, 14)]
+survey2 <- survey2[complete.cases(survey2),]
+
+#corrplot.mixed
+library(corrplot)
+sigcorr <- cor.mtest(survey2, conf.level = .95)
+corrplot.mixed(cor(survey2), lower.col = "black", upper = "ellipse", tl.col = "black", number.cex = .7, 
+               order = "hclust", tl.pos = "lt", tl.cex=.7, p.mat = sigcorr$p, sig.level = .05)
+
+# chart.correlation
+library(PerformanceAnalytics)
+chart.Correlation(survey[,c(1,9, 10, 13, 14)], histogram = TRUE, pch = 19)
+```
+
+*Conclusion*: These plots indicates that there may be a positive correlation between social and econ (coefficient=0.47). Other variables have weak correlations below our threshold and are not significant. Next, it would be interesting to try to fit a linear or quadratic model to predict social based on econ (or vice versa).
+
+### Generalized Linear Model
+
+Below, I use 5 categorical and continuous variables to predict attitudes towards the environment and chose the best model using backwards stepwise regression. An interesting issue I faced was how to determine attitudes about the environment. Individual survey questions indicated positive or negative support for the environment but were skewed. When I averaged the responses to these questions, though, I got a normally distributed composite variable that measured environmental attitudes.
+
+*Driving question*: What makes somebody likely to care about the environment?
+
+```{r}
+# source
+source("http://www.reuningscherer.net/s&ds230/Rfuncs/regJDRS.txt")
+# import data
+envdat <- read.csv("http://reuningscherer.net/s&ds230/data/envdata.csv", header=T)
+envdat2 <- envdat[envdat$V3 %in% c("6","12", "18", "19", "20", "24", "38"),]
+# recoding numbers to country name
+library(car)
+envdat2$Country <- recode(envdat2$V3, "6 = 'USA'; 12 = 'Norway'; 18 = 'Russia'; 19 = 'New Zealand'; 20 = 'Canada'; 24 = 'Japan'; 38 = 'Mexico'")
+# recoding numbers to sex
+envdat2$Gender <- recode(envdat2$V200, "1 = 'Male'; 2 = 'Female'")
+# adding years and education to database
+envdat2$AgeYears <- envdat2$V201
+envdat2$Educ <- envdat2$V204
+envdat2$Educ[envdat2$Educ>30] <- NA # recoding outliers for education
+# recoding employment status
+envdat2$EmpStat <- recode(envdat2$V231, "1 = 'Full Time'; 2 = 'Part Time'; 3 = 'Part Time'; 4 = 'With Family'; 8 = 'With Family'; 6 = 'Student'; 7 = 'Retired'; 5 = 'Other'; 9 = 'Other'; 10 = 'Other'")
+
+# this is where it gets interesting: how do we measure attitude about the environment? there are a few survey questions that indicated higher/lower support of the environment, so we will average those scores
+sumPos <- rowSums(envdat2[, c("V11", "V13", "V22", "V24", "V26")])
+sumNeg <- rowSums(envdat2[, c("V12", "V16", "V17", "V19", "V20", "V21", "V23")])
+sumTot <- sumPos - sumNeg + 6*7
+envdat2$EnvAtt <- sumTot
+qqPlot(envdat2$EnvAtt, col="red", pch=19, ylab="Environmental Attention", main="NQ Plot of Environmental Attention")
+# interestingly, unlike the question answers, this combined variable is normally distributed!
+
+# subset of data for what we are interested in
+envdat3 <- envdat2[, c((dim(envdat)[2]+1):(dim(envdat2)[2]))]
+envdat3 <- envdat3[complete.cases(envdat3),]
+attach(envdat3)
+
+# determining whether variables have interactions
+interaction.plot(Gender, Country, EnvAtt,  type = 'b', lwd = 3, col = c('red','blue','black','pink','green','orange','purple'), ylab="Environmental Attention", main = "Interaction Plot of Gender and Country")
+interaction.plot(Gender, EmpStat, EnvAtt,  type = 'b', lwd = 3, col = c('red','blue','black','pink','green','orange','purple'), ylab="Environmental Attention", main = "Interaction Plot of Gender and Employment Status")
+interaction.plot(Country, EmpStat, EnvAtt,  type = 'b', lwd = 3, col = c('red','blue','black','pink','green','orange','purple'), ylab="Environmental Attention", main = "Interaction Plot of Country and Employment Status")
+
+# interaction between gender and employment status seems signifcant; let's confirm with ANOVA
+aov1 <- aov(EnvAtt ~ Country + EmpStat + Country*EmpStat)
+summary(aov1)
+aov2 <- aov(EnvAtt ~ Country + Gender + Country*Gender)
+summary(aov2)
+aov3 <- aov(EnvAtt ~ Gender + EmpStat + Gender*EmpStat)
+summary(aov3)
+# interaction p-values for country-gender and employment status-country are significant
+
+# GLM
+m1 <- lm(EnvAtt ~ Country + Gender + AgeYears + Educ + EmpStat +  Gender*Educ + EmpStat*Country + Gender*Country + EmpStat*Gender + AgeYears*Gender, data=envdat3)
+# backwards stepwise regression
+m2 <- lm(EnvAtt ~ Country + Gender + AgeYears + Educ + EmpStat +  Gender*Educ + EmpStat*Country + Gender*Country, data=envdat3)
+summary(m2)
+# checking model assumptions
+myResPlots2(m2)
+```
+
+*Conclusion*: Using a composite variable that measures environmental attitude, we can predict environmental attitude using country, gender, age, education, employment status, and interactions between gender and education, employment status and country, and gender and country.  Age has a positive coefficent, indicating that environmental awareness increases with age. Similarly, education has a positive coefficient, also indicating that environmental awareness increases with years of education. Countries have varying effects on environmental awareness, with Japan standing out with a high, positive coefficient of 32, indicating the country is very environmentally aware. Also standing out among employment status is student, with a high, positive coefficient for environmental awareness. The male coefficient is positive, indicating that males are more likely to be environmentally aware. There are significant interactions between “Employment Status - Other” and Country in 6 of the countries, but perhaps that is because the sample size for “Other” is smaller.
