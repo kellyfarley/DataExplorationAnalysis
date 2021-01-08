@@ -23,7 +23,7 @@ Survey of statistical methods using the R programming language applied to real w
 
 * **R Programming Language**: data structures, functions, loops, libraries
 * **RMarkdown**: syntax, formatting (bold, headers, italics), inserting links and images, commenting for clarity
-* **Data Scraping**: scraping publically available information; cleaning and subsetting using regular expressions; converting data types
+* **Data Scraping**: scraping publicly available information; cleaning and subsetting using regular expressions; converting data types
 * **Graphics**: visual understanding of data before proceeding with analysis; data transformation; scatterplots, histograms, boxplots, matrix plots
 * **Statistical Analysis**: working with categorical versus continuous data; t-tests, bootstrapped confidence intervals, correlation, analysis of variance, non-parametric tests
 * **Regression**: ensuring model assumptions are met; adjusted R^2, BIC, Cp statistic for model selection; general linear models; logistic regression
