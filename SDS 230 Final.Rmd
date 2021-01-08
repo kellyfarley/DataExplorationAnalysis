@@ -1,0 +1,202 @@
+---
+title: "What Makes a Match?"
+authors: 
+output:
+  html_document: default
+  pdf_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(car)
+library(ggplot2)
+library(reshape2)
+library(boot)
+```
+What determines love at first sight? To determine the significant variables involved in making a mutual match, we examine a speed dating dataset compiled by Columbia Business School from 2002-2004. Participants underwent 4-minute speed dates with 10-20 members of the opposite sex. Data was collected about the participants prior to the dates, their opinions of their partner immediately following the date, and the results of the date a month later. Our goal is to analyze the factors that contribute to both partners agreeing that the 4-minute speed date is a “match,” therefore, providing insight to what contributes to early attraction in a relationship. The variables we will be examining are “gender,” order of date during the night ("order"), age (“age” of person, “age_p” of partner), career field (“career” and “career_p” which we subdivided into 5 categories), hometown region (“region” which we subdivided into 5 categories based on zipcode), sociableness (as determined by how often one goes out go out, rescaled so 10 is high and 1 is low), “confidence” (as measured by the expected number of matches out of 10-20 prior to the event, rescaled so 1 is low and 10 is high), and “perception” of partner’s interest (1 being low, 10 being high). We will be using only a subset of the data, in which both partners agreed that the interaction was a match (“match” and “dec_0” both equal to 1).
+
+#### Data Cleaning
+We first created a dataframe that included only variables of interest and indicated whether the partner combination was a match (where 1=mutual match and 0=not). The gender column data was recoded from 0 and 1 to female and male, respectively. The career values were recoded to more general career fields (Business, STEM, Humanities, Social Science, and Other). We recoded the zipcodes based on region by taking the first number of the zipcode and recoding it to Northeast, South, Midwest, Southwest, or South. We rescaled the social variable to be out of 10 instead of 7 and also substracted it from 10 so that 1 would be low socialness and 10 would be high socialness. Finally, we rescaled the confidence variable to be out of 10 instead of out of 20. At the end, all of our categorical variables are in more general, clearer categories, and all of our continuous variables are on scales ranging from 1 to 10 where 1 is low and 10 is high.
+We then wanted the partner’s data to be inserted into the same row as the individual's for easier comparison. This was difficult given that there were multiple columns for each individual, and various issues arose when trying to extract the desired values of specific rows based on the values of other specific rows. We ended up creating a vector of the partner_ID values, and then determining the career, region, socialness, confidence, and perception of the given partner_ID. This data was added to new columns on the dataframe, which was then rearranged so individual and partner characteristics are side by side.
+```{r}
+dating <- read.csv('/Users/kellyfarley/Desktop/speeddate.csv')
+db <- dating[,c("iid", "gender","partner", "age", "field_cd", "zipcode","go_out", "expnum", "prob", "match", "dec_o", "pid", "age_o")]
+
+colnames(db)[1:13] <- c("ID", "gender", "order", "age", "career", "region", "social", "confidence", "perception", "match","match_p", "ID_p", "age_p") # renaming column names
+
+db$mutual[(db$match==1) & (db$match_p==1)] <- 1 #new column indicates 1 for a match and 0 for not a match
+db$mutual[is.na(db$mutual)] <- 0
+
+# only complete cases
+db <- db[complete.cases(db),]
+
+# recoding and rescaling
+db$gender <- recode(db$gender, "0 = 'F'; 1 = 'M'")
+db$career <- recode(db$career, "1 = 'Business'; 2 = 'STEM'; 3 = 'SO';
+                    4 = 'STEM'; 5 = 'STEM'; 6 = 'HU'; 7 = 'Business';
+                    8 = 'Business'; 9 = 'Other'; 10 = 'STEM'; 11 = 'SO';
+                    12 = 'Other'; 13 = 'Business'; 14 = 'HU'; 15 = 'HU'; 
+                    16 = 'HU'; 17 = 'HU'; 18 = 'Other'")
+db$region <- recode(substr(db$region, 1, 1), "0 = 'Northeast'; 1 = 'Northeast';
+                    2 = 'South'; 3 = 'South'; 7 = 'South'; 4 = 'Midwest';
+                    5 = 'Midwest'; 6 = 'Midwest'; 8 = 'Southwest'; 9 = 'West'")
+db$social <- 10-((db$social)*(10/7)) + 1
+db$confidence <- db$confidence/2
+
+# GETTING THE PARTNER DATA
+pidvec <- db$ID_p # vector of the partner IDs
+
+# empty vectors for all the partner variables
+careervec <- rep(NA, dim(db)[1])
+regionvec <- rep(NA, dim(db)[1])
+socialvec <- rep(NA, dim(db)[1])
+confidencevec <- rep(NA, dim(db)[1])
+perceptionvec <- rep(NA, dim(db)[1])
+
+# get row of partner and look up this characteristic for the partner, then push to vector
+for(i in 1:dim(db)[1]){
+  careervec[i] <- db$career[which(db$ID==pidvec[i])[1]]
+  regionvec[i] <- db$region[which(db$ID==pidvec[i])[1]]
+  socialvec[i] <- db$social[which(db$ID==pidvec[i])[1]]
+  confidencevec[i] <- db$confidence[which(db$ID==pidvec[i])[1]]
+  perceptionvec[i] <- db$perception[which(db$ID==pidvec[i])[1]]
+}
+
+# PUTTING IT ALL TOGETHER
+db <- cbind(db, careervec, regionvec, socialvec, confidencevec, perceptionvec) # cbind partner vectors to the dataset
+colnames(db)[15:19] <- c("career_p", "region_p","social_p", "confidence_p", "perception_p") # renaming columns
+# reordering columns
+db <- db[c("ID", "ID_p", "gender", "order", "age", "age_p", "career", "career_p", "region", "region_p", "social", "social_p", "confidence", "confidence_p", "perception", "perception_p", "mutual", "match", "match_p")]
+# removing the last two columns about matches that are no longer relevant bc we created a mutual column with the same info
+db <- db[,c(1:17)]
+
+#separating nonmatches from matches
+matches <- db[db$mutual == 1,]
+noMatch <- db[db$mutual == 0,]
+
+db <- db[complete.cases(db),]
+```
+
+```{r}
+df7 <- db[, c("mutual", "social", "confidence", "perception")]
+df7$mutual <- recode(df7$mutual, "0 = 'Not a Match'; 1 = 'Match'")
+ggplot(melt(df7, id.var = "mutual"), aes(x=variable, y=value, fill = mutual)) + geom_boxplot() + ggtitle("Scalar Characteristics")
+```
+The figures above compare the scalar variables for matches and nonmatches. By and large, both of the people involved in a match had higher confidence in finding a match, perceptions of their partner's interest, and sociability than people with no matches, made apparent by looking at the median, 3rd quartile, and 4th quartile of the respective plots. Further analysis will be conducted in order to determine the validity of confidence as a predictor because the means in that boxplot appear closest.
+```{r}
+(test1 <- t.test(db$confidence ~ db$mutual, conf.level = 0.99))
+
+#bootstrap
+diffConfid <- rep(NA, 10000)
+
+for(i in 1:10000)
+{
+  diffConfid[i] <- mean((sample(noMatch$confidence,length(noMatch$confidence), 
+        replace = TRUE)))- mean((sample(matches$confidence,length(matches$confidence), 
+                                        replace = TRUE)))
+}
+ciBoot <- quantile(diffConfid, c(0.01, 0.99)) # %99 percent confidence interval 
+
+hist(diffConfid, main = "Bootstrapped Sample Mean Difference of Confidence Data",
+     xlab = "Confidence", ylab = "Frequency", col = 'blue' )
+abline(v = ciBoot, lwd = 3, col = 'red')
+abline(v = test1$conf.int, lwd = 3, col = "green", lty = 2)
+legend("topright", c("Original CI","Boot CI"), lwd = 3, col = c("red","green"),
+       lty = c(1,2), bg = "white")
+```
+The t-test resulted in a p-value of 2.465e-06 < alpha (0.05), so we reject the null hypothesis. Since the 0.99 confidence interval for the t.test is inside the 0.99 confidence interval for the bootstrapped differences in means, we can assume that the results of the t-test are sound. so we can reject the null hypothesis. The data suggests that there is a significant difference between the mean averages of 'confidence' for the matching and nonmatching groups.
+```{r}
+#scatterplot <- between person and partner
+s_var <- c("confidence","confidence_p")
+temp <- length(s_var)/2
+#### scatter of attribute with correlations
+  plot(jitter(db[,"confidence"]) ~ jitter(db[,"confidence_p"]), pch =19, 
+       col = factor(db$mutual),xlab = "confidence", ylab = "confidence_p")
+  mtext('Partner vs Self Comparison of Confidence', cex = 1.2, line = 1)
+  mtext(paste("Corr match:", round(cor(matches[,"confidence_p"], matches[,"confidence"],use="complete.obs"),2), "Corr non-match:", round(cor(noMatch[,"confidence_p"], noMatch[,"confidence"], use="complete.obs"),2)), cex = 1, line = 0)
+```
+In the figures above, red points represent matches and black points represent non-matches It seems that both matches and non-matches did not have high confidence in their potential to secure dates since the majority of points for both demographics lie below a confidence level of 5. However, there are more red dots (matches) than black dots (non-matches) in the top right area, which represents high confidence in both people.The actual correlation values do not appear promising. They are around zero. 
+```{r}
+ggplot(matches, aes(sample = perception)) + stat_qq() + stat_qq_line() + ggtitle("Normal Quantile Plot of Self Perception for Matches")
+```
+```{r, eval = F}
+ggplot(noMatch, aes(sample = perception)) + stat_qq() + stat_qq_line() + ggtitle("Normal Quantile Plot of Self Perception for non-Matches")
+```
+The quantile plot shows that the perception data for matches has a leftward skew, demonstrated by the downward bow. Greater frequency of high perception of interest in the 'match' data leads us to believe that a high perceived interest is favorable when looking for matches. As in, your chances are higher if you think the other person is interested.
+
+#### Genderwise Comparison of Numerical Variables Within Matches
+```{r}
+df8 <- matches[, c("gender", "confidence", "confidence_p", "perception", "perception_p")]
+ggplot(melt(df8, id.var = "gender"), aes(x=variable, y=value, fill = gender)) + geom_boxplot() + ggtitle("Comparison of Numerical Variables within Matches") 
+```
+All variables seem to be distributed similarly between both genders, except for partner perception of interest. Men seem to have a lower partner perception of interest than females, meaning that men's partners (i.e. the females of the study) thought that the men were less interested in them when compared to the inverse situation.
+```{r}
+## Permutation Test
+actDiff <- by(matches$age, matches$gender, mean)
+actDiff <- actDiff[1] - actDiff[2]
+N <- 10000
+diffvals <- rep(NA, N)
+for (i in 1:N) {
+  fakeGender <- sample(matches$gender)
+  diffvals[i] <- mean(matches$age[fakeGender == "F"])-mean(matches$age[fakeGender == "M"])
+}
+
+# histogram of permuted MEAN differences
+hist(diffvals, col = "purple", 
+     main = "Permuted Sample Mean Diff in Age", xlab = "Rating")
+abline(v = actDiff, col="blue", lwd=3)
+mean(abs(diffvals) >= abs(actDiff))
+```
+As seen above, there is not a significant difference in the means of age by gender. This is demonstrated by p = 0.39 > alpha (0.05), thus we cannot reject the null hypothesis. For this data, we cannot say that the matches are typically between different age pairs. This is makes sense considering how narrow the age range was to begin with, being on a college campus. 
+
+#### Analyzing Catagorical Variables within Matches
+```{r}
+#barplot(table(db$career), col = c(2:6), main = 'Barplot of Careers: Entire Data', xlab = 'Career', ylab = '# of people')
+df3 <- matches[, c("career", "career_p")] 
+df4 <- df3
+df4$career <- recode(df4$career, "'Business' = 'Any'; 'STEM' = 'Any'; 'HU' = 'Any'; 'Other' = 'Any'; 'SO' = 'Any'")
+df3 <- rbind(df3, df4)
+df3 <- df3[!(df3$career=="" | df3$career_p=="" | is.na(df3$career) | is.na(df3$career_p)) , ]
+
+ggplot(melt(df3, id.var = "career"), aes(x=value, fill=value)) + geom_bar() + facet_grid (variable ~ career) + xlab("") + scale_fill_discrete("Partner's Career") + theme(axis.text.x = element_blank(), axis.ticks = element_blank()) + facet_wrap( ~ career, scales = "free") + labs(title="Career Pairings Among Matches") 
+
+
+```
+Taking into account the career distribution of the entire data, we can draw some conclusions from the relative distribution of careers of matched couples. Persons in the humanities sought out stem professionals more than any other field, impressive considering the saturation of business careers in the dating pool. People in the STEM field had the flattest barplot, meaning that they had an aversion to business professions relative to the total amount. Furthermore, STEM people had a disproportional amount of matches with people in STEM, and almost equivalent matches with HU and SO. Ironically, people in the 'other' catagory did not match with each other and avoided STEM people according to their barplot, but we cannot draw conclusions due to the small number of 'other' participants and total matches. People with a profession in the social sciences and business appear to have a barplot similar in distribution to the one with all of the data, meaning that they had the least amount of bias. 
+```{r}
+df9 <- matches[, c("region", "region_p")] 
+df9 <- df9[!(df9$region=="" | df9$region_p==""| is.na(df9$region) | is.na(df9$region_p)), ]
+ggplot(melt(df9, id.var = "region"), aes(x=value, fill=value)) + geom_bar() + facet_grid (variable ~ region) + xlab("") + coord_flip() + scale_fill_discrete("Partner's Region") + ggtitle("Region Pairings Among Matches")
+```
+Repeating the process for region. People of the South and Southwest regions have a boxplot similar to that of the entire dataset, meaning that they did not favor any group significantly, though the South  did favor the Northeast slightly more than others. Northeasterners had an out of proportion bias towards Northeasterners, Southerers and Midwesterners, which was reciprocated by the Southerners and Midwesterners Lastly, people of the West region heavily favored Northeasterners, with a reduction of interest in South and Southwesterners.
+
+#### Analysis
+Multiple regression plan is to use a general linear model because the outcome variable mutual is binary 0,1, and there is a mix of categorical and continuous predictors. With a binary outcome variable, it does not make sense to discuss r^2 values or transformations. It is curved, so we will use logistic regression.
+```{r}
+db$ageDiff <- abs(db$age - db$age_p)
+db$careerSame[db$career == db$career_p] <- 1
+db$careerSame[is.na(db$careerSame)] <- 0
+db$regionSame[db$region == db$region_p] <- 1
+db$regionSame[is.na(db$regionSame)] <- 0
+db2 <- db[,c("ID", "order", "ageDiff", "confidence", "confidence_p", "social", "social_p", "perception", "perception_p", "careerSame", "regionSame", "mutual", "region", "region_p", "career", "career_p")]
+```
+```{r}
+lmod1 <- glm(mutual ~ ., data = db2, family = binomial) #binomial means we will use the logit function
+summary(lmod1)
+
+#Then we will do logistic regression with ONLY continuous variables
+db4 <- db[,c("ID", "order", "confidence", "confidence_p", "social", "social_p", "perception", "perception_p", "mutual")]
+lmod2 <- glm(mutual ~ ., data = db4, family = binomial)
+summary(lmod2)
+devtab1 <- anova(lmod2)
+devtab1$Deviance
+#Get p-value for test of significance
+1 - pchisq(devtab1$Deviance[2], df = devtab1$Df[2])
+glm.diag.plots(lmod2, glmdiag = glm.diag(lmod2), subset = NULL,
+               iden = FALSE, labels = NULL, ret = FALSE)
+```
+We see that the significant variables include sociability, sociability of partner (p = 0.000366), perception of partner's interest (p < 2e-16), partner's perception of interest (p = 2.55e-08), and same career. Sociability on both sides, perceived interest on both sides, and same career have positive coefficients, suggesting that higher scores in these areas lead to more matches. On the other hand, living in the West significantly decreases chances of finding a match.
+In the logistic regression model, we see that perception_p, perception, social_p, and social are significant for the alpha 0, while confidence_p is significant to the alpha 0.01, but order and confidence are not significant at all with p-values well over 0.05! Based on the p value of the model being less than alpha (0.03146384 < 0.05) after the ANOVA function is applied, we reject the null hypothesis and conclude that there is at least one significant predictor in this model.
+Looking at the residual plot of deviances (top left plot) from the logistic regression model, we see two curves. The upper is for matches and the lower is for non matches. Note that the density of points is higher on the upper curve for fitted values between -2 and 2, with residuals approaching 0. Similarly, the density of points on the lower curve is higher at fitted values between -4.5 and .3, again with residuals near 0. So, pairs where there is a match mostly have high fitted values, meaning that the model would predict a match there. Unfortunately, a match also occurs at points with fitted values approaching 0 and less than 0, meaning that a match is definitely not predicted in those pairs; those are errors and seem to occur half the time with this model because the densest area of the upper curve spans from -2 to +2. Mostly, however, when there is not a match, we predict no match. The top right plot shows the ordered residuals compared to a normal distribution. Our extreme residuals are more extreme than a normal distribution (not on line), but that is not uncommon for GLM models; it also makes sense to have a broken line...top curve is for matches, and bottom curve is for non-matches again.
+
+#### Conclusion
+Our intention was to determine what makes a match. After the thoroughly outlined analysis above, we conclude that people more confident in finding matches, are more sociabile, who talk with more social people, who think their partner is interested in them, or whose partner perceives interest are more likely to lead to a match. We noticed that women tend to not think their male partner is interested in them and the order of your date relative to likelihood of matching is inconclusive and should be studied further. Business and SO are unbiased in careers, while humanities prefer STEM. South and Southwest are unbiased in regions, and overall, Northeast is preferred, but Northeast themselves prefer the South. Most people are here for fun! And lastly, based on the GLM, living in the West significantly decreases matching chances. Overall, the best predictors for finding a match are confidence in finding a match (perhaps this affects how you carry yourself), percieved interest in your partner and expressed interest in your partner (act like you LIKE THEM), and sociability of the pair (sociability increases how open you are to really meeting someone new). While these three predictors make perfect sense, we hope to investigate further why different career fields prefer each other and perhaps why the West significantly decreases chances at matching.  
